@@ -1,0 +1,5 @@
+intersections:
+  - id: Crossroad-1
+    location: Center
+  - id: Crossroad-2
+    location: Market

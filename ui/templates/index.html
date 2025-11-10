@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>RAKHSH Dushanbe - Дашборд</title>
+</head>
+<body>
+<h1>Состояние светофора</h1>
+<div id="info">
+    <p>Светофор: <span id="light">{{ data.light_state }}</span></p>
+    <p>Машины: <span id="vehicles">{{ data.vehicles }}</span></p>
+    <p>Пешеход: <span id="pedestrian">{{ data.pedestrian }}</span></p>
+</div>
+<script>
+async function refreshData(){
+    const res = await fetch('/api/state');
+    const data = await res.json();
+    document.getElementById('light').innerText = data.light_state;
+    document.getElementById('vehicles').innerText = data.vehicles;
+    document.getElementById('pedestrian').innerText = data.pedestrian;
+}
+setInterval(refreshData, 1000);
+</script>
+</body>
+</html>

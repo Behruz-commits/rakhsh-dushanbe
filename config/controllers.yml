@@ -1,0 +1,7 @@
+controllers:
+  - id: 1
+    location: "Душанбе, пересечение Рудаки и Айни"
+    mode: "simulator"
+  - id: 2
+    location: "Душанбе, пересечение М.Турсунзаде и Фотех Ниёзи"
+    mode: "hardware"

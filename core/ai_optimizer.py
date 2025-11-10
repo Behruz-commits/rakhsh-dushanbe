@@ -3,57 +3,56 @@ import json
 from hardware_interface.traffic_light_driver import TrafficLightDriver
 from hardware_interface.sensor_interface import SensorInterface
 
-# Попытка подключения функции обновления веб-интерфейса
+# Подключение функции обновления веб-интерфейса
 try:
     from ui.web_server import update_data
 except ImportError:
-    update_data = None  # Если веб-сервер не запущен
+    update_data = None  # если веб-сервер не запущен
 
 class AIOptimizer:
     def __init__(self, mode='simulator'):
         """
-        Инициализация оптимизатора управления светофорами.
-        mode — режим работы: 'simulator' или 'hardware'
+        Инициализация оптимизатора.
+        mode: 'simulator' или 'hardware'
         """
         self.mode = mode
+        self.controller = TrafficLightDriver(simulation=(mode=='simulator'))
+        self.sensors = SensorInterface(simulation=(mode=='simulator'))
 
-        # Настройка контроллера и сенсоров
-        self.controller = TrafficLightDriver(simulation=(mode == 'simulator'))
-        self.sensors = SensorInterface(simulation=(mode == 'simulator'))
+        # Текущее состояние светофора
+        self.current_state = "RED"
+        self.state_order = ["RED", "GREEN", "YELLOW"]
 
-        if mode == 'simulator':
-            print("[ИНФО] Запущен оптимизатор в режиме симуляции.")
-        else:
-            print("[ИНФО] Запущен оптимизатор в режиме реального оборудования.")
-
-        # Подключение коммуникационного канала (MQTT)
+        # MQTT
         try:
             from communication.mqtt_client import MQTTClient
             self.network = MQTTClient(client_id="AIOptimizer")
             print("[СЕТЬ] MQTT-клиент успешно инициализирован.")
         except Exception as e:
-            print(f"[ОШИБКА СЕТИ] Не удалось инициализировать MQTT-клиент: {e}")
+            print(f"[ОШИБКА СЕТИ] MQTT не инициализирован: {e}")
             self.network = None
 
-        print("[ГОТОВО] Инициализация завершена.")
+        print(f"[ИНФО] Запущен оптимизатор в режиме: {self.mode}")
 
     def run_cycle(self):
-        """Один цикл работы оптимизатора"""
         sensors = self.sensors.get_sensor_data()
         vehicles = sensors["vehicles"]
         pedestrian = sensors["pedestrian"]
 
-        # Простая логика управления светофором
-        if vehicles > 5:
-            next_state = "GREEN"
-        elif pedestrian:
-            next_state = "RED"
-        else:
+        # Цикличное переключение светофора
+        next_index = (self.state_order.index(self.current_state) + 1) % len(self.state_order)
+        next_state = self.state_order[next_index]
+
+        # Простейшая адаптация по сенсорам
+        if self.current_state == "GREEN" and vehicles < 2:
             next_state = "YELLOW"
+        elif self.current_state == "RED" and pedestrian:
+            next_state = "GREEN"
 
         self.controller.set_light_state(next_state)
+        self.current_state = next_state
 
-        # Публикация данных через MQTT
+        # MQTT публикация
         if self.network:
             msg = json.dumps({
                 "vehicles": vehicles,
@@ -61,8 +60,9 @@ class AIOptimizer:
                 "light_state": next_state
             })
             self.network.publish("rakhsh/traffic/state", msg)
+            print(f"[MQTT] Опубликовано: {msg}")
 
-        # Обновление веб-интерфейса
+        # Обновление веб-дэшборда
         if update_data:
             update_data({
                 "vehicles": vehicles,
@@ -73,12 +73,11 @@ class AIOptimizer:
         print(f"[ДАННЫЕ] Сенсоры: {sensors} | Светофор: {next_state}")
 
     def start(self):
-        """Основной цикл"""
         print("[СИСТЕМА] Запуск цикла управления...")
         while True:
             self.run_cycle()
             time.sleep(3)
 
 if __name__ == "__main__":
-    ai = AIOptimizer(mode='simulator')
-    ai.start()
+    optimizer = AIOptimizer(mode='simulator')
+    optimizer.start()

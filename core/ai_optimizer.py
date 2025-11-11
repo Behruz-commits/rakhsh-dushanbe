@@ -1,83 +1,45 @@
+# path: core/ai_optimizer.py
 import time
 import json
-from hardware_interface.traffic_light_driver import TrafficLightDriver
-from hardware_interface.sensor_interface import SensorInterface
+import logging
+from core.interfaces import ILightDriver, ISensor, INetworkClient
 
-# Подключение функции обновления веб-интерфейса
-try:
-    from ui.web_server import update_data
-except ImportError:
-    update_data = None  # если веб-сервер не запущен
+logger = logging.getLogger("rakhsh.ai")
 
 class AIOptimizer:
-    def __init__(self, mode='simulator'):
-        """
-        Инициализация оптимизатора.
-        mode: 'simulator' или 'hardware'
-        """
-        self.mode = mode
-        self.controller = TrafficLightDriver(simulation=(mode=='simulator'))
-        self.sensors = SensorInterface(simulation=(mode=='simulator'))
-
-        # Текущее состояние светофора
-        self.current_state = "RED"
+    def __init__(self, light_driver: ILightDriver, sensor: ISensor, network: INetworkClient=None):
+        self.light = light_driver
+        self.sensor = sensor
+        self.network = network
         self.state_order = ["RED", "GREEN", "YELLOW"]
-
-        # MQTT
-        try:
-            from communication.mqtt_client import MQTTClient
-            self.network = MQTTClient(client_id="AIOptimizer")
-            print("[СЕТЬ] MQTT-клиент успешно инициализирован.")
-        except Exception as e:
-            print(f"[ОШИБКА СЕТИ] MQTT не инициализирован: {e}")
-            self.network = None
-
-        print(f"[ИНФО] Запущен оптимизатор в режиме: {self.mode}")
+        self.current = self.light.get_state() if hasattr(self.light, "get_state") else "RED"
+        logger.info("AIOptimizer initialized", extra={"mode": "simulator"})
 
     def run_cycle(self):
-        sensors = self.sensors.get_sensor_data()
-        vehicles = sensors["vehicles"]
-        pedestrian = sensors["pedestrian"]
+        s = self.sensor.read()
+        vehicles = s.get("vehicles", 0)
+        pedestrian = s.get("pedestrian", False)
 
-        # Цикличное переключение светофора
-        next_index = (self.state_order.index(self.current_state) + 1) % len(self.state_order)
-        next_state = self.state_order[next_index]
+        # примитив: крутить по циклу + адаптация
+        next_idx = (self.state_order.index(self.current) + 1) % len(self.state_order)
+        next_state = self.state_order[next_idx]
 
-        # Простейшая адаптация по сенсорам
-        if self.current_state == "GREEN" and vehicles < 2:
+        if self.current == "GREEN" and vehicles < 2:
             next_state = "YELLOW"
-        elif self.current_state == "RED" and pedestrian:
+        if self.current == "RED" and pedestrian:
             next_state = "GREEN"
 
-        self.controller.set_light_state(next_state)
-        self.current_state = next_state
+        try:
+            self.light.set_state(next_state)
+            self.current = next_state
+        except Exception:
+            logger.exception("Failed to set light state")
 
-        # MQTT публикация
+        payload = {"vehicles": vehicles, "pedestrian": pedestrian, "light_state": next_state}
+        logger.info("Cycle", extra=payload)
+
         if self.network:
-            msg = json.dumps({
-                "vehicles": vehicles,
-                "pedestrian": pedestrian,
-                "light_state": next_state
-            })
-            self.network.publish("rakhsh/traffic/state", msg)
-            print(f"[MQTT] Опубликовано: {msg}")
-
-        # Обновление веб-дэшборда
-        if update_data:
-            update_data({
-                "vehicles": vehicles,
-                "pedestrian": pedestrian,
-                "light_state": next_state
-            })
-
-        print(f"[ДАННЫЕ] Сенсоры: {sensors} | Светофор: {next_state}")
-
-    def start(self):
-        print("[СИСТЕМА] Запуск цикла управления...")
-        while True:
-            self.run_cycle()
-            time.sleep(3)
-
-if __name__ == "__main__":
-    optimizer = AIOptimizer(mode='simulator')
-    optimizer.start()
+            try:
+                self.network.publish("rakhsh/traffic/state", json.dumps(payload, ensure_ascii=False))
+            except Exception:
+                logger.exception("Network publish failed")

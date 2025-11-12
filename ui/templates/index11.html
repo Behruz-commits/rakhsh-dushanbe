@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>RAKHSH Dushanbe — Дашборд перекрёстков</title>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 18px; }
+    .panel { border: 1px solid #ddd; padding: 12px; border-radius: 6px; margin-bottom: 12px; }
+    .row { display:flex; gap:12px; align-items:center; }
+    .state-badge { font-weight: bold; padding:6px 10px; border-radius:6px; color:#fff; }
+    .RED { background:#d9534f; }
+    .GREEN { background:#5cb85c; }
+    .YELLOW { background:#f0ad4e; color:#000; }
+    #settingsModal { display:none; position:fixed; top:10%; left:50%; transform:translateX(-50%); background:#fff; padding:20px; border:1px solid #ccc; z-index:1000; width:400px; }
+    #overlay { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); z-index:900; }
+  </style>
+</head>
+<body>
+  <h1>RAKHSH — Дашборд перекрёстков</h1>
+
+  <div class="panel">
+    <div class="row">
+      <label for="traffic_light_selector">Выберите светофор:</label>
+      <select id="traffic_light_selector"></select>
+
+      <label for="traffic_mode_selector">Режим светофора:</label>
+      <select id="traffic_mode_selector">
+        <option value="auto">Auto (Оптимизатор)</option>
+        <option value="manual">Manual (Человек)</option>
+      </select>
+
+      <button id="apply_mode_btn">Применить режим</button>
+
+      <button id="settings_btn" style="margin-left:auto;">Настройки ВебГуи</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Состояние светофора <span id="intersection_name"></span></h3>
+    <div class="row">
+      <div>Светофор: <span id="light_state" class="state-badge RED">RED</span></div>
+      <div>Машины: <span id="car_count">0</span></div>
+      <div>Пешеход: <span id="pedestrian">false</span></div>
+      <div>Режим оптимизатора: <span id="optimizer_mode">—</span></div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label for="manual_value">При ручном режиме — выставить состояние:</label>
+      <select id="manual_value">
+        <option value="RED">RED</option>
+        <option value="GREEN">GREEN</option>
+        <option value="YELLOW">YELLOW</option>
+      </select>
+      <button id="apply_manual_btn">Применить вручную</button>
+    </div>
+
+    <div style="margin-top:12px;">
+      <strong>Решение оптимизатора:</strong>
+      <div id="optimizer_decision">—</div>
+    </div>
+  </div>
+
+  <!-- Настройки modal -->
+  <div id="overlay"></div>
+  <div id="settingsModal">
+    <h3>Настройки интерфейса</h3>
+    <div>
+      <label>Частота обновления (сек): <input id="poll_interval" type="number" value="1" min="0.2" step="0.2"></label>
+    </div>
+    <div style="margin-top:8px;">
+      <label><input id="show_optimizer" type="checkbox" checked> Показывать режим оптимизатора</label>
+    </div>
+    <div style="margin-top:12px;">
+      <button id="save_settings">Сохранить</button>
+      <button id="close_settings">Закрыть</button>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let selected_light = null;
+    let pollInterval = 1000;
+
+    // Инициализация селектора светофоров из server-rendered переменной (if any)
+    const initialLights = {{ lights|tojson }};
+    const selector = document.getElementById('traffic_light_selector');
+    function populateSelector() {
+      selector.innerHTML = '';
+      for (const [id, info] of Object.entries(initialLights)) {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = `Светофор ${id} — ${info.intersection}`;
+        selector.appendChild(opt);
+      }
+      // выбрать первый по умолчанию
+      if (selector.options.length) {
+        selector.selectedIndex = 0;
+        onLightChange();
+      }
+    }
+
+    populateSelector();
+
+    selector.addEventListener('change', onLightChange);
+
+    function onLightChange() {
+      selected_light = selector.value;
+      fetchStateAndRender(selected_light);
+    }
+
+    async function fetchStateAndRender(light_id) {
+      try {
+        const res = await fetch(`/api/state?light_id=${encodeURIComponent(light_id)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const st = data.state;
+        renderState(light_id, st);
+      } catch (e) {
+        console.error("fetch error", e);
+      }
+    }
+
+    function renderState(light_id, st) {
+      document.getElementById('intersection_name').textContent = `#${light_id} — ${st.intersection || ''}`;
+      document.getElementById('car_count').textContent = st.vehicles ?? 0;
+      document.getElementById('pedestrian').textContent = String(st.pedestrian);
+      document.getElementById('optimizer_mode').textContent = st.optimizer_mode || '—';
+      document.getElementById('optimizer_decision').textContent = st.optimizer_decision || '—';
+
+      const badge = document.getElementById('light_state');
+      badge.textContent = (st.light_state || 'RED').toUpperCase();
+      badge.classList.remove('RED','GREEN','YELLOW');
+      badge.classList.add(badge.textContent);
+    }
+
+    // SocketIO: получаем пуши от сервера
+    socket.on('state_update', (msg) => {
+      const lid = msg.light_id;
+      const st = msg.state;
+      // Обновляем initialLights и UI если выбран
+      initialLights[lid] = st;
+      if (selected_light === lid) renderState(lid, st);
+    });
+
+    // Bulk initial state on connect
+    socket.on('bulk_state', (payload) => {
+      Object.assign(initialLights, payload.lights || {});
+      // если ничего не выбрано — выбрать 1-у
+      if (!selected_light && Object.keys(initialLights).length) {
+        selector.selectedIndex = 0;
+        onLightChange();
+      }
+    });
+
+    // Периодический опрос в фоне (fallback)
+    let pollTimer = setInterval(()=> {
+      if (selected_light) fetchStateAndRender(selected_light);
+    }, pollInterval);
+
+    // Применить режим (auto/manual)
+    document.getElementById('apply_mode_btn').addEventListener('click', async () => {
+      if (!selected_light) return alert('Выберите светофор');
+      const mode = document.getElementById('traffic_mode_selector').value;
+      const payload = { light_id: selected_light, mode: mode };
+      if (mode === 'manual') {
+        const manualVal = document.getElementById('manual_value').value;
+        payload.value = manualVal;
+      }
+      const res = await fetch('/api/set_mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const r = await res.json();
+      if (res.ok) {
+        renderState(selected_light, r.state);
+      } else {
+        alert('Ошибка: ' + JSON.stringify(r));
+      }
+    });
+
+    // Apply manual specific button
+    document.getElementById('apply_manual_btn').addEventListener('click', async () => {
+      if (!selected_light) return alert('Выберите светофор');
+      const manualVal = document.getElementById('manual_value').value;
+      const payload = { light_id: selected_light, mode: 'manual', value: manualVal };
+      const res = await fetch('/api/set_mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const r = await res.json();
+      if (res.ok) renderState(selected_light, r.state);
+    });
+
+    // Settings modal
+    document.getElementById('settings_btn').addEventListener('click', () => {
+      document.getElementById('overlay').style.display = 'block';
+      document.getElementById('settingsModal').style.display = 'block';
+    });
+    document.getElementById('close_settings').addEventListener('click', () => {
+      document.getElementById('overlay').style.display = 'none';
+      document.getElementById('settingsModal').style.display = 'none';
+    });
+    document.getElementById('save_settings').addEventListener('click', () => {
+      const v = parseFloat(document.getElementById('poll_interval').value) || 1;
+      pollInterval = Math.max(0.2, v) * 1000;
+      clearInterval(pollTimer);
+      pollTimer = setInterval(()=> {
+        if (selected_light) fetchStateAndRender(selected_light);
+      }, pollInterval);
+      document.getElementById('overlay').style.display = 'none';
+      document.getElementById('settingsModal').style.display = 'none';
+    });
+
+    // Init manual selection defaults
+    document.getElementById('manual_value').value = 'GREEN';
+
+  </script>
+</body>
+</html>

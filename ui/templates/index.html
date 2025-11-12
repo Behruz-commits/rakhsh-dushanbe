@@ -1,14 +1,128 @@
-<p>Светофор: <span id="light">{{ data.light_state }}</span></p>
-<p>Машины: <span id="vehicles">{{ data.vehicles }}</span></p>
-<p>Пешеход: <span id="pedestrian">{{ data.pedestrian }}</span></p>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Состояние светофора</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .block { margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <h1>Состояние светофора</h1>
+
+    <!-- Существующие статичные поля -->
+    <div class="block">
+        <p>Светофор: <span id="light_color">RED</span></p>
+        <p>Машины: <span id="car_count">0</span></p>
+        <p>Пешеход: <span id="pedestrian_status">false</span></p>
+    </div>
+
+    <!-- Инкремент: выбор светофора -->
+    <div class="block">
+        <label for="traffic_light_selector">Выберите светофор:</label>
+        <select id="traffic_light_selector">
+            <option value="1">Светофор 1 - ул. Айни-Рудаки</option>
+            <option value="2">Светофор 2 - ул. Фирдоуси-Боева</option>
+        </select>
+    </div>
+
+    <!-- Инкремент: режим оптимизатора -->
+    <div class="block">
+        <p>Режим оптимизатора: <span id="optimizer_mode">Неактивен</span></p>
+    </div>
+
+    <!-- Инкремент: выбор режима светофора -->
+    <div class="block">
+        <label for="traffic_mode_selector">Режим светофора (человеческое вмешательство):</label>
+        <select id="traffic_mode_selector">
+            <option value="auto">Авто</option>
+            <option value="manual">Ручной</option>
+        </select>
+        <button id="set_mode_btn">Установить режим</button>
+    </div>
+
+    <!-- Инкремент: кнопка настроек интерфейса -->
+    <div class="block">
+        <button id="settings_btn">Настройки ВебГуи</button>
+    </div>
+
+    <script>
+        const lightSelector = document.getElementById('traffic_light_selector');
+        const carCount = document.getElementById('car_count');
+        const lightColor = document.getElementById('light_color');
+        const pedestrianStatus = document.getElementById('pedestrian_status');
+        const optimizerMode = document.getElementById('optimizer_mode');
+        const trafficModeSelector = document.getElementById('traffic_mode_selector');
+        const setModeBtn = document.getElementById('set_mode_btn');
+
+        let currentLightId = lightSelector.value;
+
+        function fetchState() {
+            fetch(`/api/state/${currentLightId}`)
+                .then(resp => resp.json())
+                .then(data => {
+                    carCount.textContent = data.cars;
+                    lightColor.textContent = data.color;
+                    pedestrianStatus.textContent = data.pedestrian;
+                    optimizerMode.textContent = data.mode === 'auto' ? 'Автоматический' : 'Ручной';
+                });
+        }
+
+        // Периодическое обновление каждые 2 секунды
+        setInterval(fetchState, 2000);
+
+        // Обработка смены выбранного светофора
+        lightSelector.addEventListener('change', () => {
+            currentLightId = lightSelector.value;
+            fetchState();
+        });
+
+        // Отправка изменения режима светофора на сервер
+        setModeBtn.addEventListener('click', () => {
+            const selectedMode = trafficModeSelector.value;
+            fetch('/api/set_mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ light_id: currentLightId, mode: selectedMode })
+            }).then(resp => resp.json())
+              .then(data => {
+                  if(data.status === 'ok') fetchState();
+                  else alert('Ошибка установки режима!');
+              });
+        });
+
+        // Настройки интерфейса (пока простое окно alert)
+        document.getElementById('settings_btn').addEventListener('click', () => {
+            alert('Окно настроек ВебГуи (здесь будут параметры интерфейса)');
+        });
+
+        // Инициалный вызов
+        fetchState();
+    </script>
+</body>
+</html>
+<!-- существующий код index.html -->
 
 <script>
-async function refreshData(){
-    const res = await fetch('/api/state');
-    const data = await res.json();
-    document.getElementById('light').innerText = data.light_state;
-    document.getElementById('vehicles').innerText = data.vehicles;
-    document.getElementById('pedestrian').innerText = data.pedestrian;
+// существующие функции и обработчики
+
+// ===== Инкремент: динамическое обновление выбранного светофора =====
+const selector = document.getElementById('traffic_light_selector');
+const carCountElem = document.getElementById('car_count');
+const modeElem = document.getElementById('optimizer_mode');
+
+async function updateState() {
+    const lightId = selector.value;
+    const response = await fetch(`/api/state/${lightId}`);
+    const data = await response.json();
+
+    carCountElem.textContent = data.cars;
+    modeElem.textContent = data.mode;
+
+    // TODO: обновить цвет светофора и другие поля по аналогии
 }
-setInterval(refreshData, 500);
+
+selector.addEventListener('change', updateState);
+setInterval(updateState, 2000); // обновлять каждые 2 секунды
 </script>

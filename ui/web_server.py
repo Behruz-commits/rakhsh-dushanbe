@@ -1,42 +1,46 @@
-# path: ui/web_server.py
-import os
-import threading
-from flask import Flask, render_template, jsonify
-from communication.comm_utils import log_event
-from communication.mqtt_client import MQTTClient  # реализация должна соответствовать INetworkClient
+# web_server.py
+from flask import Flask, request, jsonify, render_template
+from flask_socketio import SocketIO
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-app = Flask(__name__, template_folder=os.path.join(BASE, "templates"), static_folder=os.path.join(BASE, "static"))
+app = Flask(__name__)
+socketio = SocketIO(app)
 
-state = {"vehicles": 0, "pedestrian": False, "light_state": "RED"}
+# Хранилище текущих состояний светофоров
+traffic_states = {
+    "1": {"color": "RED", "cars": 5, "pedestrian": False, "mode": "auto"},
+    "2": {"color": "GREEN", "cars": 3, "pedestrian": True, "mode": "manual"}
+}
 
-@app.route("/")
+@app.route('/')
 def index():
-    return render_template("index.html", data=state)
+    return render_template('index.html')
 
-@app.route("/api/state")
-def api_state():
+# Получить текущее состояние конкретного светофора
+@app.route('/api/state/<light_id>')
+def get_state(light_id):
+    state = traffic_states.get(light_id, {})
     return jsonify(state)
 
-@app.route("/health")
-def health():
-    return jsonify({"status": "ok"})
+# Установить режим светофора (например, auto/manual)
+@app.route('/api/set_mode', methods=['POST'])
+def set_mode():
+    data = request.json
+    light_id = data.get("light_id")
+    mode = data.get("mode")
+    if light_id in traffic_states:
+        traffic_states[light_id]["mode"] = mode
+        # Опционально оповещаем фронтенд через SocketIO
+        socketio.emit('update_state', {light_id: traffic_states[light_id]})
+        return jsonify({"status": "ok"})
+    return jsonify({"status": "error"}), 400
 
-def update_state(new):
-    global state
-    state = new
+# SocketIO событие от фронтенда (например, запросить обновление)
+@socketio.on('request_state')
+def handle_request_state(data):
+    light_id = data.get("light_id")
+    if light_id in traffic_states:
+        socketio.emit('update_state', {light_id: traffic_states[light_id]})
 
-def mqtt_listener():
-    def cb(topic, payload):
-        import json
-        try:
-            data = json.loads(payload)
-            update_state(data)
-            log_event("info", "mqtt", f"received {topic}", payload=data)
-        except Exception:
-            log_event("error", "mqtt", "failed parse")
-    client = MQTTClient(client_id="webserver")
-    client.subscribe("rakhsh/traffic/state", cb)
-    client.loop_forever()
-
-threading.Thread(target=mqtt_listener, daemon=True).start()
+if __name__ == '__main__':
+    # Запуск сервера с поддержкой динамики
+    socketio.run(app, host='127.0.0.1', port=5000)
